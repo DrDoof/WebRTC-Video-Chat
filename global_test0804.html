@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+	<meta charset="UTF-8" />
+	<title>PeerJS Connection Testing</title>
+	<script src="http://cdn.peerjs.com/0.3/peer.min.js"></script>
+	<script src="http://cloud.koyama.me/peer.js"></script>
+	<script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+	<h1>WebRTC接続テスト</h1>
+	<p id="msg">My peerID: <span id="my-peer-id">***</span></p>
+	<input type="text" placeholder="ルーム名" id="input_room">
+	<input type="button" value="入室" id="btn_join"> 
+	<input type="text" placeholder="Remote-PeerID" id="input_peer-id">
+	<input type="button" value="接続開始" id="btn_start-connect">
+	<input type="button" value="接続終了" id="btn_end-connect">
+	<input type="button" value="MediaStream再取得" id="btn_media_again">
+	<br><hr>
+	<table>
+	<tr>
+		<th><h2>ローカル・メディア</h2></th>
+		<th><h2>リモート・メディア 1</h2></th>
+	</tr>
+	<tr>
+		<td><video id="local-video" autoplay></video></td>
+		<td id="remote-list"></td>
+	</tr>
+	</table>
+<style>
+	#input_peer-id, #btn_start-connect, #btn_end-connect, #btn_media_again, #msg {
+		display: none;
+	}
+</style>
+<script>
+
+// MediaStream メディアの取得
+navigator.getUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia || navigator.msGetUserMedia;
+
+// PeerJS Keyの設定
+var peer = new Peer({key: 'tamakagi',
+		 host: '183.181.0.12',
+		 port: '443',
+		 debug: 1,
+		 config: { 'iceServers': [{ url: 'turn:192.168.0.50:3478', username: 'unset', credential: 'unset' }] }
+});
+
+// フォーム・ボタン系の定義
+var start_button = document.getElementById("btn_start-connect"); // 開始ボタン
+var peer_id = document.getElementById("input_peer-id"); // 接続先フォーム
+var end_button = document.getElementById("btn_end-connect"); // 終了ボタン
+var again_button = document.getElementById("btn_media_again"); // メディア再取得ボタン
+// ルーム系
+var join_button = document.getElementById("btn_join"); 
+var input_room = document.getElementById("input_room");
+
+// グローバル変数の定義
+var recover_data, restore_data, myid;
+
+/* =========================================================
+ 00.[読み込み時] PeerServerとの接続, ルーム管理サーバとの接続
+========================================================= */
+
+window.onload = function localSetup(){
+
+	// 許可ボタンを促す
+	alert("カメラとマイクへのアクセスを許可してください");
+
+	// WebRTC処理
+        navigator.getUserMedia({video: true, audio: true}, function(stream) {
+                // localのビデオをvideoタグのsrcへ付与
+                var local_video = document.getElementById("local-video");
+                local_video.setAttribute('src',URL.createObjectURL(stream));
+
+ 		// 自分を消音(mute)
+                local_video.setAttribute('muted',"");
+
+                // streamを代入
+                window.localStream = stream;
+        }, function(err) {
+                // getUerMediaでの取得が失敗時
+                console.log('Failed to get local stream' ,err);
+        });
+}
+
+/* =========================================================
+ 01. PeerServerとの接続, ルーム管理サーバとの接続
+========================================================= */
+
+peer.on('open', function(id) {
+
+	// グローバル変数に代入
+	myid = id;
+
+	// PeerIDのコンソール出力
+	console.log('My peer ID is: ' + id);
+
+	// HTMLへ書き出し
+	document.getElementById("my-peer-id").innerHTML = id;
+
+});
+
+/* =============================================================
+ 02. 接続開始(入室ボタンを押下)
+============================================================= */
+
+btn_join.onclick = function() {
+
+	// ボタンの無効化
+	join_button.setAttribute("disabled", "");
+
+	/* =============================================================
+	 02-a. 現在，接続しているユーザ情報(sessionStorage)
+	============================================================= */
+
+	// 接続の開始
+	var socket = io.connect();
+
+	// ユーザ名とルーム名の入力
+	// var roomname = window.prompt("接続するルーム名を入力してください");
+	// var roomname = "test1";
+	var roomname = document.getElementById("input_room");
+
+	// サーバからconnetctedを受信
+	socket.on('connected', function() {
+		// ルーム（初期入力）とネーム(peerid)を送信
+		socket.json.emit('init', { 'room': roomname.value , 'name': myid });
+	});
+
+	// ルームのメンバーリストを取得
+	socket.on('user_lists', function(data){ // websocketでuser_listを取得時
+
+		/* =============================================================
+		 02-b. SessionStorageからデータを復元
+		============================================================= */
+
+		// sessionStorageのデータを呼び出し
+		if(window.sessionStorage) {
+
+			// sessionStorageの読み込み
+			restore_data = window.sessionStorage.getItem("old_members");
+
+			var json_debug = JSON.parse(restore_data);
+			// alert(json_debug);
+
+			// sessionStorageの中身がnullでない，かつ空でない
+			if(restore_data != null && restore_data != "") {
+				console.log("sessionStorageが空 or 未定義でない");
+				// JSONデータから復元
+				recover_data = JSON.parse(restore_data);
+			} else { // 初期(最初)のみ実行
+				console.log("sessionStorageが未定義です");
+				recover_data = 0; // 未定義時のフラグ設定
+			}
+		} else { // sessionStorageに未対応の場合
+			console.log("Not supported sessionStorage");
+		}
+
+		console.log("新旧データの比較");
+		console.log(data.member);
+		console.log(recover_data);
+
+		if(recover_data == 0){ // はじめて sessionStorageが空
+			for(verify in data.member){ // 新リスト
+				if(data.member[verify] != myid){ // 自分以外
+					// 発信処理
+					console.log(data.member[verify] + "へ発信します");
+					var call = peer.call(data.member[verify], window.localStream);
+					receiveSetup(call); // 発信
+				}
+			}
+		} else { // sessionStorageに値が存在(再接続)
+			for(verify in data.member){ // 新リスト
+				if(data.member[verify] != myid){ // 自分以外
+					for(key in recover_data){ // 旧リスト
+						if(data.member[verify] == recover_data[key] && verify!=key){
+							console.log("peedidが一致，ユーザidが不一致。新::旧" + data.member[verify] +"::" + recover_data[key]);
+							break; // peeridが一致，ユーザidが不一致
+						}
+						if(data.member[verify] == recover_data[key] && verify==key){
+							console.log("peedidが一致，ユーザidが一致。新::旧" + data.member[verify] +"::" + recover_data[key]);
+							break; // peeridが一致，ユーザidが一致
+						}
+					}
+					if(data.member[verify] != recover_data[key]) { // peerid不一致,接続を実行
+						// [Debug] 自分以外のIDを出力
+						console.log("peerid不一致。 新::旧" + data.member[verify] +"::"+recover_data[key] );
+						// 自分以外のルーム内のユーザへ発信
+						var call = peer.call(data.member[verify], window.localStream);
+						receiveSetup(call);
+					}
+				}
+			}
+		}
+
+		/* =============================================================
+		 02-c. 現在のdata.memberを保存(sessionStorage)
+		============================================================= */
+
+		// sessionStorageに保存
+		if(window.sessionStorage) {
+			console.log("保存前のデータ");
+			console.log(data.member);
+			// JSONデータに変換
+			var save_datas = JSON.stringify(data.member);
+			console.log("JSON変換");
+			console.log(save_datas);
+			// JSONデータをsessionStorageに保存
+			window.sessionStorage.setItem("old_members", save_datas);
+		} else { // sessionStorage未対応
+			alert("SessionStorage is not supported on this browser.");
+		}
+
+	});
+
+}
+
+/* =========================================================
+ 03. 着信
+========================================================= */
+
+// [着信] CALLを受け取った時の応答
+peer.on('call', function(call) {
+	call.answer(window.localStream);
+	receiveSetup(call);
+});
+
+// [例外] エラー発生時にメッセージ
+peer.on('error', function(err){
+	console.log(err.message);
+});
+
+/* =========================================================
+ 04. 発信
+========================================================= */
+
+// [発信] (開始ボタン押下)
+start_button.onclick = function(){
+	var call = peer.call(peer_id.value, window.localStream);
+	receiveSetup(call);
+}
+
+/* =========================================================
+ 05. 終了
+========================================================= */
+
+// [終了] (終了ボタンを押下)
+end_button.onclick = function(){
+	window.existingCall.close();
+}
+
+/* =========================================================
+ 06. ローカルメディア再取得
+========================================================= */
+
+// 「MediaStream再取得」ボタンのクリック時
+again_button.onclick = function(){
+	window.existingCall.close();
+}
+
+/* =========================================================
+ 07. [呼び出し時]DOMの生成，接続状態の確認・設定
+========================================================= */
+function receiveSetup(call){
+	// window.existingCallが定義時は閉じる
+	if(window.existingCall){
+		// window.existingCall.close(); 複数接続を許可するために無効
+	}
+	
+	// リモートからの受信時
+	call.on('stream',function(stream){
+		// videoタグのリモート側のsrcオプションにURL.createObjectURL(stream)を付与して表示。(setattrあたりを使う）
+		var vdo = document.createElement("video");
+		vdo.src = URL.createObjectURL(stream);
+		document.getElementById("remote-list").appendChild(vdo);
+		vdo.setAttribute('autoplay',"");
+	});
+	
+	// call待機状態へ変更
+	window.existingCall = call;
+	// debug
+	// console.log(call.peer);
+
+	// 接続を閉じる(複数接続を行う場合は障害になる
+	// call.on('close');
+}
+
+</script>
+</body>
+</html>
