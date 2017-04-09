@@ -1,7 +1,11 @@
 # WebRTC-Video-Chat
 a Simple Video Chat of WebRTC
 
-## Caputures
-<img src="http://i.imgur.com/bo33wsc.png">
+## Screen Captures
+<img src="http://i.imgur.com/bo33wsc.png" width="600">
 
-<blockquote class="imgur-embed-pub" lang="en" data-id="a/5hu2Z"><a href="//imgur.com/5hu2Z"></a></blockquote><script async src="//s.imgur.com/min/embed.js" charset="utf-8"></script>
+<img src="http://i.imgur.com/3COZO14.png" width="600">
+
+<img src="http://i.imgur.com/p7qsQT2.png" width="600">
+
+<img src="http://i.imgur.com/SibiJks.png" width="600">
